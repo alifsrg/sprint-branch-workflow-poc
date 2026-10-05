@@ -1,0 +1,23 @@
+.github/scripts/sprint-branch.sh
+  s_c13e114f4821ac::t_d05454863b87af 1-350
+.github/workflows/sprint-branch.yml
+  s_c13e114f4821ac::t_5bd53c379fe8a1 1-78
+README.md
+  s_c13e114f4821ac::t_a0d18629d77641 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "6bc244533c175ead0468f42d485cdd4d30a77e68",
+  "prompts": {},
+  "sessions": {
+    "s_c13e114f4821ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "def8fdf6-5eee-44f6-93fd-ffc69659a842",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alif Siregar <fauzan.alif@tiket.com>"
+    }
+  }
+}
