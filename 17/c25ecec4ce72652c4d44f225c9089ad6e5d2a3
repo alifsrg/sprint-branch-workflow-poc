@@ -1,0 +1,14 @@
+a.md
+  h_6f9f48f1b9a94f 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "17c25ecec4ce72652c4d44f225c9089ad6e5d2a3",
+  "prompts": {},
+  "humans": {
+    "h_6f9f48f1b9a94f": {
+      "author": "Alif Siregar <fauzan.alif@tiket.com>"
+    }
+  }
+}
