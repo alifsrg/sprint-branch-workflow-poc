@@ -1,0 +1,78 @@
+name: Sprint branch
+
+# Keeps sprint-<N> = main + every open PR labelled "merge-to-sprint".
+# Automatic events always run "refresh"; "rebuild" and "new-sprint" are manual only.
+# Logic lives in .github/scripts/sprint-branch.sh.
+
+on:
+  workflow_dispatch: # 👈 Manual trigger
+    inputs:
+      mode:
+        description: "refresh = merge new changes | rebuild = reset from main (deletes + recreates the branch) | new-sprint = roll over to sprint-N+1"
+        type: choice
+        options:
+          - refresh
+          - rebuild
+          - new-sprint
+        default: refresh
+      sprint_number:
+        description: "new-sprint only: sprint number to create (default: latest + 1)"
+        type: string
+        required: false
+      force_delete_previous:
+        description: "new-sprint only: delete the previous sprint branch even if it's not merged into main"
+        type: boolean
+        default: false
+
+  # pull_request_target runs the workflow from main, so PRs can't alter it.
+  # Safe here because PR code is only merged with git, never built or executed.
+  pull_request_target:
+    types: [labeled, unlabeled, synchronize, reopened, closed]
+    branches: [main]
+
+  push:
+    branches: [main]
+
+permissions:
+  contents: write # ✅ Needed to push the sprint branch
+  pull-requests: write # ✅ Needed to comment on PRs
+
+env:
+  LABEL: merge-to-sprint
+  FREEZE_LABEL: sprint-frozen
+
+jobs:
+  sprint-branch:
+    runs-on: ubuntu-latest
+
+    # NOTE: env isn't available in job-level `if`, keep 'merge-to-sprint' in sync with LABEL above.
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      ((github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+        github.event.label.name == 'merge-to-sprint') ||
+      ((github.event.action == 'synchronize' || github.event.action == 'reopened') &&
+        contains(github.event.pull_request.labels.*.name, 'merge-to-sprint')) ||
+      (github.event.action == 'closed' && !github.event.pull_request.merged &&
+        contains(github.event.pull_request.labels.*.name, 'merge-to-sprint'))
+
+    # Job-level (not workflow-level) so skipped events never replace a queued real run.
+    # Replacing one queued refresh with a newer one is fine: every refresh scans all labelled PRs.
+    concurrency:
+      group: sprint-branch
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SPRINT_BOT_TOKEN || github.token }}
+
+      - name: Update sprint branch
+        env:
+          GH_TOKEN: ${{ secrets.SPRINT_BOT_TOKEN || github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'refresh' }}
+          SPRINT_NUMBER_INPUT: ${{ inputs.sprint_number }}
+          FORCE_DELETE_PREVIOUS: ${{ inputs.force_delete_previous }}
+        run: bash .github/scripts/sprint-branch.sh
