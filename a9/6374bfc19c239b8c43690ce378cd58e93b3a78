@@ -1,0 +1,25 @@
+CONTEXT.md
+  s_8a5fc3f3e2c73f::t_055fca83391a81 1-19,23-25,35-50
+  s_8a5fc3f3e2c73f::t_21b6aeed520a18 26-34
+  s_8a5fc3f3e2c73f::t_0d3c3e79d8e6d6 20-22
+docs/adr/0001-ship-sprints-via-release-pr.md
+  s_8a5fc3f3e2c73f::t_070a9e4c76a7a9 17
+  s_8a5fc3f3e2c73f::t_41958162e1671a 15-16
+  s_8a5fc3f3e2c73f::t_d77ce0251dde1b 1-14,18-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "a96374bfc19c239b8c43690ce378cd58e93b3a78",
+  "prompts": {},
+  "sessions": {
+    "s_8a5fc3f3e2c73f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "142f91f4-a30e-42b6-b5d5-2e4af501291c",
+        "model": "unknown"
+      },
+      "human_author": "Alif Siregar <fauzan.alif@tiket.com>"
+    }
+  }
+}
