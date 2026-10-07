@@ -1,0 +1,25 @@
+CLAUDE.md
+  s_8a5fc3f3e2c73f::t_2b09caf3722c04 1-13
+docs/agents/triage-labels.md
+  s_8a5fc3f3e2c73f::t_2b09caf3722c04 1-15
+docs/agents/issue-tracker.md
+  s_8a5fc3f3e2c73f::t_2b09caf3722c04 1-45
+docs/agents/domain.md
+  s_8a5fc3f3e2c73f::t_2b09caf3722c04 1-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "67b6d6449952f9960e96c8903f29cbf7f765f798",
+  "prompts": {},
+  "sessions": {
+    "s_8a5fc3f3e2c73f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "142f91f4-a30e-42b6-b5d5-2e4af501291c",
+        "model": "unknown"
+      },
+      "human_author": "Alif Siregar <fauzan.alif@tiket.com>"
+    }
+  }
+}
