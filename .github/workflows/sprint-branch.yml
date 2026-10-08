@@ -2,6 +2,8 @@ name: Sprint branch
 
 # Keeps sprint-<N> = main + every open PR labelled "merge-to-sprint".
 # Automatic events always run "refresh"; "rebuild" and "new-sprint" are manual only.
+# A push to main also runs "update-prs" afterwards: Branch updates for open PRs that merge cleanly,
+# Conflict warnings for the ones that don't.
 # Logic lives in .github/scripts/sprint-branch.sh.
 
 on:
@@ -40,6 +42,7 @@ permissions:
 env:
   LABEL: merge-to-sprint
   FREEZE_LABEL: sprint-frozen
+  CONFLICT_LABEL: has-conflicts
 
 jobs:
   sprint-branch:
@@ -75,4 +78,48 @@ jobs:
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'refresh' }}
           SPRINT_NUMBER_INPUT: ${{ inputs.sprint_number }}
           FORCE_DELETE_PREVIOUS: ${{ inputs.force_delete_previous }}
+        run: bash .github/scripts/sprint-branch.sh
+
+  # After main moves (Release PR merge or Hotfix): merge main into every open PR into main that
+  # merges cleanly (Branch update) and warn the ones that conflict (Conflict warning). Runs after
+  # Refresh so the Sprint branch takes the new main first, and even if Refresh failed, since it
+  # never touches the Sprint branch. Ignores Freeze.
+  # A new commit on a PR carrying has-conflicts re-checks just that PR, clearing the warning once
+  # it merges cleanly again.
+  # With github.token the bot's pushes start no further runs, so CI doesn't run on its merge commits.
+  update-prs:
+    needs: sprint-branch
+    # NOTE: keep 'has-conflicts' in sync with CONFLICT_LABEL above.
+    if: >-
+      ${{ !cancelled() && (
+        github.event_name == 'push' ||
+        (github.event_name == 'pull_request_target' &&
+          (github.event.action == 'synchronize' || github.event.action == 'reopened') &&
+          contains(github.event.pull_request.labels.*.name, 'has-conflicts'))) }}
+    runs-on: ubuntu-latest
+
+    # One group per PR re-check and one for full runs, so a queued full run is never replaced by a
+    # single-PR re-check, or the other way round.
+    concurrency:
+      group: update-prs-${{ github.event.pull_request.number || 'all' }}
+      cancel-in-progress: false
+
+    permissions:
+      contents: write # ✅ Needed to push Branch updates
+      pull-requests: write # ✅ Needed to comment on and label PRs
+      issues: write # ✅ Needed to create the has-conflicts label
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SPRINT_BOT_TOKEN || github.token }}
+
+      - name: Update open PRs with main
+        env:
+          GH_TOKEN: ${{ secrets.SPRINT_BOT_TOKEN || github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          MODE: update-prs
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bash .github/scripts/sprint-branch.sh
