@@ -1,0 +1,19 @@
+docs/adr/0001-ship-sprints-via-release-pr.md
+  s_d3ef4d265218ba::t_252f11ec2685b9 13-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "7c00d8e87fd2d2eb77e3d19948c936438e7b18a2",
+  "prompts": {},
+  "sessions": {
+    "s_d3ef4d265218ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e7e72424-af47-4f09-a72e-289b3cf2627f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alif Siregar <fauzan.alif@tiket.com>"
+    }
+  }
+}
