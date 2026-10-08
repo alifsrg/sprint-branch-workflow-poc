@@ -1,0 +1,24 @@
+test/rollover.bats
+  s_d3ef4d265218ba::t_952f01dabc447d 1-54
+test/helpers.bash
+  s_d3ef4d265218ba::t_952f01dabc447d 139-142
+test/rebuild.bats
+  s_d3ef4d265218ba::t_952f01dabc447d 1-33,37-41
+  s_d3ef4d265218ba::t_7000e9941d3b26 34-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "58fb816089d5ebb21dcbc4439c12519c154a9012",
+  "prompts": {},
+  "sessions": {
+    "s_d3ef4d265218ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e7e72424-af47-4f09-a72e-289b3cf2627f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alif Siregar <fauzan.alif@tiket.com>"
+    }
+  }
+}
