@@ -1,0 +1,128 @@
+# Shared fixture for the sprint branch script tests.
+#
+# Each test gets a throwaway world:
+#   $ORIGIN        bare repo standing in for GitHub (branches + refs/pull/<n>/head)
+#   $DEV           a developer's clone, used to create commits and PR branches
+#   $GH_STATE_DIR  fake gh state (see test/fake-bin/gh)
+#
+# The script is run the way the workflow runs it: env vars in, from a fresh clone of origin.
+
+bats_require_minimum_version 1.5.0
+
+REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+SCRIPT="$REPO_ROOT/.github/scripts/sprint-branch.sh"
+
+setup_world() {
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+  export GIT_AUTHOR_NAME=dev GIT_AUTHOR_EMAIL=dev@example.com
+  export GIT_COMMITTER_NAME=dev GIT_COMMITTER_EMAIL=dev@example.com
+  export PATH="$REPO_ROOT/test/fake-bin:$PATH"
+
+  ORIGIN="$BATS_TEST_TMPDIR/origin.git"
+  DEV="$BATS_TEST_TMPDIR/dev"
+  export GH_STATE_DIR="$BATS_TEST_TMPDIR/gh"
+
+  git init --quiet --bare --initial-branch=main "$ORIGIN"
+  git clone --quiet "$ORIGIN" "$DEV" 2>/dev/null
+  git -C "$DEV" symbolic-ref HEAD refs/heads/main
+  echo hello > "$DEV/README.md"
+  git -C "$DEV" add README.md
+  git -C "$DEV" commit --quiet -m "Initial commit"
+  git -C "$DEV" push --quiet origin main
+
+  mkdir -p "$GH_STATE_DIR"
+  echo '[]' > "$GH_STATE_DIR/prs.json"
+  echo '[]' > "$GH_STATE_DIR/comments.json"
+  : > "$GH_STATE_DIR/writes.jsonl"
+  : > "$GH_STATE_DIR/calls.log"
+}
+
+# Commits <content> to <file> on <branch> (creating it from main if needed) and pushes the branch.
+commit() { # <branch> <file> <content> [message]
+  local branch="$1" file="$2" content="$3" message="${4:-Update $2 on $1}"
+  if git -C "$DEV" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
+    git -C "$DEV" checkout --quiet "$branch"
+  else
+    git -C "$DEV" checkout --quiet -b "$branch" main
+  fi
+  printf '%s\n' "$content" > "$DEV/$file"
+  git -C "$DEV" add "$file"
+  git -C "$DEV" commit --quiet -m "$message"
+  git -C "$DEV" push --quiet --force origin "$branch"
+}
+
+# Creates sprint-<N> on origin from the current main.
+create_sprint() { # <N>
+  git -C "$DEV" push --quiet origin "main:refs/heads/sprint-$1"
+}
+
+# Registers an open PR into main from <branch> and publishes refs/pull/<n>/head.
+open_pr() { # <n> <branch> <title> [label...]
+  local n="$1" branch="$2" title="$3"
+  shift 3
+  local labels
+  labels="$(printf '%s\n' "$@" | jq -R . | jq -cs 'map(select(. != "") | {name: .})')"
+  jq --argjson n "$n" --arg branch "$branch" --arg title "$title" --argjson labels "$labels" \
+    '. + [{number: $n, title: $title, headRefName: $branch, baseRefName: "main",
+           state: "OPEN", isDraft: false, labels: $labels}]' \
+    "$GH_STATE_DIR/prs.json" > "$GH_STATE_DIR/prs.json.tmp"
+  mv "$GH_STATE_DIR/prs.json.tmp" "$GH_STATE_DIR/prs.json"
+  push_pr_head "$n" "$branch"
+}
+
+# Points refs/pull/<n>/head at origin's <branch>, as GitHub does after every push to a PR.
+push_pr_head() { # <n> <branch>
+  git --git-dir="$ORIGIN" update-ref "refs/pull/$1/head" "refs/heads/$2"
+}
+
+remove_label() { # <n> <label>
+  jq --argjson n "$1" --arg l "$2" \
+    'map(if .number == $n then .labels |= map(select(.name != $l)) else . end)' \
+    "$GH_STATE_DIR/prs.json" > "$GH_STATE_DIR/prs.json.tmp"
+  mv "$GH_STATE_DIR/prs.json.tmp" "$GH_STATE_DIR/prs.json"
+}
+
+# Runs the script from a fresh clone of origin. Pass env as NAME=value arguments.
+# Defaults: an automatic refresh, as triggered by pull_request_target.
+run_script() { # [NAME=value...]
+  local checkout="$BATS_TEST_TMPDIR/checkout-$RANDOM"
+  git clone --quiet "$ORIGIN" "$checkout" 2>/dev/null
+  run _run_in "$checkout" \
+    MODE=refresh EVENT_NAME=pull_request_target GITHUB_REPOSITORY=acme/app \
+    GITHUB_STEP_SUMMARY="$BATS_TEST_TMPDIR/summary.md" \
+    "$@" bash "$SCRIPT"
+}
+
+_run_in() { # <dir> [NAME=value...] <command...>
+  cd "$1" && shift && env "$@"
+}
+
+# ---------- observations ----------
+
+remote_sha() { # <ref>
+  git --git-dir="$ORIGIN" rev-parse "$1"
+}
+
+# Subjects of commits on <ref> that are not on main, oldest first.
+remote_subjects() { # <ref>
+  git --git-dir="$ORIGIN" log --reverse --format=%s "main..$1"
+}
+
+# Succeeds if <ancestor> is contained in <ref> on origin.
+remote_contains() { # <ref> <ancestor>
+  git --git-dir="$ORIGIN" merge-base --is-ancestor "$(remote_sha "$2")" "$(remote_sha "$1")"
+}
+
+# Recorded gh writes as JSON lines, optionally only those on PR <n>.
+gh_writes() { # [n]
+  if [[ -n "${1:-}" ]]; then
+    jq -c --argjson n "$1" 'select(.pr == $n)' "$GH_STATE_DIR/writes.jsonl"
+  else
+    cat "$GH_STATE_DIR/writes.jsonl"
+  fi
+}
+
+# Body of the last comment written on PR <n>.
+last_comment() { # <n>
+  gh_writes "$1" | tail -1 | jq -r .body
+}
