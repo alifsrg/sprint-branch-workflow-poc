@@ -75,6 +75,15 @@ push_pr_head() { # <n> <branch>
   git --git-dir="$ORIGIN" update-ref "refs/pull/$1/head" "refs/heads/$2"
 }
 
+# Adds a comment from the bot (as left by an earlier run) without recording it as a write.
+seed_bot_comment() { # <n> <body>
+  jq --argjson n "$1" --arg body "<!-- sprint-bot -->"$'\n'"$2" \
+    '. + [{id: ((map(.id) | max // 1000) + 1), issue: $n, body: $body}]' \
+    "$GH_STATE_DIR/comments.json" > "$GH_STATE_DIR/comments.json.tmp"
+  mv "$GH_STATE_DIR/comments.json.tmp" "$GH_STATE_DIR/comments.json"
+}
+
+# Removes <label> from PR <n>.
 remove_label() { # <n> <label>
   jq --argjson n "$1" --arg l "$2" \
     'map(if .number == $n then .labels |= map(select(.name != $l)) else . end)' \
@@ -85,7 +94,8 @@ remove_label() { # <n> <label>
 # Runs the script from a fresh clone of origin. Pass env as NAME=value arguments.
 # Defaults: an automatic refresh, as triggered by pull_request_target.
 run_script() { # [NAME=value...]
-  local checkout="$BATS_TEST_TMPDIR/checkout-$RANDOM"
+  local checkout
+  checkout="$(mktemp -d "$BATS_TEST_TMPDIR/checkout.XXXXXX")"
   git clone --quiet "$ORIGIN" "$checkout" 2>/dev/null
   run _run_in "$checkout" \
     MODE=refresh EVENT_NAME=pull_request_target GITHUB_REPOSITORY=acme/app \

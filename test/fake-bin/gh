@@ -11,12 +11,12 @@
 
 set -euo pipefail
 
-S="${GH_STATE_DIR:?GH_STATE_DIR is required}"
-echo "$*" >> "$S/calls.log"
+STATE_DIR="${GH_STATE_DIR:?GH_STATE_DIR is required}"
+echo "$*" >> "$STATE_DIR/calls.log"
 
 die() { echo "fake gh: $*" >&2; exit 1; }
 
-# Prints JSON <value> through gh's --jq (raw strings, like gh) or as-is.
+# Prints <json> through gh's --jq (raw strings, like gh) or as-is.
 output() { # <json> <jq-expr>
   if [[ -n "$2" ]]; then jq -r "$2" <<< "$1"; else echo "$1"; fi
 }
@@ -47,7 +47,7 @@ pr_list() {
       | select($head == "" or .headRefName == $head)
       | select([.labels[].name] as $have | all($labels[]; . as $l | $have | index($l)))
       | with_entries(select(.key as $k | $fields | split(",") | index($k)))
-    ]' "$S/prs.json")"
+    ]' "$STATE_DIR/prs.json")"
   output "$result" "$jq_expr"
 }
 
@@ -65,7 +65,7 @@ pr_view() {
   local result
   result="$(jq -ce --argjson n "$number" --arg fields "$fields" '
     first(.[] | select(.number == $n))
-    | with_entries(select(.key as $k | $fields | split(",") | index($k)))' "$S/prs.json")" \
+    | with_entries(select(.key as $k | $fields | split(",") | index($k)))' "$STATE_DIR/prs.json")" \
     || die "pr view: no PR #$number"
   output "$result" "$jq_expr"
 }
@@ -82,31 +82,31 @@ api() {
     esac
   done
 
-  local n id tmp="$S/comments.json.tmp"
+  local n id tmp="$STATE_DIR/comments.json.tmp"
   case "$method $path" in
     "GET repos/"*/issues/*/comments)
       n="${path%/comments}"; n="${n##*/}"
-      jq -c --argjson n "$n" '[.[] | select(.issue == $n) | {id, body}]' "$S/comments.json"
+      jq -c --argjson n "$n" '[.[] | select(.issue == $n) | {id, body}]' "$STATE_DIR/comments.json"
       ;;
     "POST repos/"*/issues/*/comments)
       n="${path%/comments}"; n="${n##*/}"
-      id="$(jq '(map(.id) | max // 1000) + 1' "$S/comments.json")"
+      id="$(jq '(map(.id) | max // 1000) + 1' "$STATE_DIR/comments.json")"
       jq --argjson n "$n" --argjson id "$id" --arg body "$body" \
-        '. + [{id: $id, issue: $n, body: $body}]' "$S/comments.json" > "$tmp"
-      mv "$tmp" "$S/comments.json"
+        '. + [{id: $id, issue: $n, body: $body}]' "$STATE_DIR/comments.json" > "$tmp"
+      mv "$tmp" "$STATE_DIR/comments.json"
       jq -cn --argjson n "$n" --argjson id "$id" --arg body "$body" \
-        '{op: "comment.create", pr: $n, id: $id, body: $body}' >> "$S/writes.jsonl"
+        '{op: "comment.create", pr: $n, id: $id, body: $body}' >> "$STATE_DIR/writes.jsonl"
       echo "{\"id\": $id}"
       ;;
     "PATCH repos/"*/issues/comments/*)
       id="${path##*/}"
-      n="$(jq -e --argjson id "$id" 'first(.[] | select(.id == $id)).issue' "$S/comments.json")" \
+      n="$(jq -e --argjson id "$id" 'first(.[] | select(.id == $id)).issue' "$STATE_DIR/comments.json")" \
         || die "api: no comment $id"
       jq --argjson id "$id" --arg body "$body" \
-        'map(if .id == $id then .body = $body else . end)' "$S/comments.json" > "$tmp"
-      mv "$tmp" "$S/comments.json"
+        'map(if .id == $id then .body = $body else . end)' "$STATE_DIR/comments.json" > "$tmp"
+      mv "$tmp" "$STATE_DIR/comments.json"
       jq -cn --argjson n "$n" --argjson id "$id" --arg body "$body" \
-        '{op: "comment.edit", pr: $n, id: $id, body: $body}' >> "$S/writes.jsonl"
+        '{op: "comment.edit", pr: $n, id: $id, body: $body}' >> "$STATE_DIR/writes.jsonl"
       echo "{\"id\": $id}"
       ;;
     *) die "api: unsupported request $method $path" ;;

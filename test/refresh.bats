@@ -32,6 +32,19 @@ setup() {
   [ -z "$(gh_writes)" ]
 }
 
+@test "marks an already included Sprint candidate in its existing bot comment" {
+  commit feat-a a.txt "a" "Add a"
+  open_pr 1 feat-a "Add feature A" merge-to-sprint
+  run_script
+  seed_bot_comment 1 "### ❌ Merge conflict with \`sprint-1\`"
+
+  run_script
+
+  [ "$status" -eq 0 ]
+  [ "$(gh_writes 1 | jq -r .op)" = comment.edit ]
+  [[ "$(last_comment 1)" == *"Included in \`sprint-1\`"* ]]
+}
+
 @test "does not merge a conflicting Sprint candidate and comments with its files" {
   commit feat-a shared.txt "from A" "A edits shared"
   commit feat-b shared.txt "from B" "B edits shared"
@@ -83,7 +96,7 @@ setup() {
   [[ "$(last_comment 1)" == *"no longer has the \`merge-to-sprint\` label"* ]]
 }
 
-@test "an automatic run skips while the Release PR is frozen" {
+@test "an automatic run skips while the Sprint branch is frozen" {
   open_pr 10 sprint-1 "Release sprint 1" sprint-frozen
   commit feat-a a.txt "a" "Add a"
   open_pr 1 feat-a "Add feature A" merge-to-sprint
@@ -96,7 +109,7 @@ setup() {
   [ -z "$(gh_writes)" ]
 }
 
-@test "a manual run proceeds while the Release PR is frozen" {
+@test "a manual run proceeds while the Sprint branch is frozen" {
   open_pr 10 sprint-1 "Release sprint 1" sprint-frozen
   commit feat-a a.txt "a" "Add a"
   open_pr 1 feat-a "Add feature A" merge-to-sprint
