@@ -1,0 +1,36 @@
+.github/workflows/sprint-branch.yml
+  s_d3ef4d265218ba::t_ddc2322d3ec124 43,80-109
+  s_d3ef4d265218ba::t_9c688d6799573e 110
+test/fake-bin/gh
+  s_d3ef4d265218ba::t_5edaebcc489add 5-6,8,10-13,78-140,187-189
+test/update-prs.bats
+  s_d3ef4d265218ba::t_a6a8ed892e6b2a 31-56
+  s_d3ef4d265218ba::t_811fc1f565e6e3 57-158
+  s_d3ef4d265218ba::t_4be999ac28d73a 1-30
+test/helpers.bash
+  s_d3ef4d265218ba::t_5edaebcc489add 36,68
+  s_d3ef4d265218ba::t_02d91e138bfacd 151
+  s_d3ef4d265218ba::t_811fc1f565e6e3 87-94,135-138
+  s_d3ef4d265218ba::t_3f5e1ff4f9883b 139
+.github/scripts/sprint-branch.sh
+  s_d3ef4d265218ba::t_6aa5a099787976 10-11,13-14,22,28,52-53,55,58-61,70-72,213-254,393-410
+  s_d3ef4d265218ba::t_3359dc78ce0a9d 411-412
+README.md
+  s_d3ef4d265218ba::t_020aff5a159f02 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "6a4362f2a88c4f86d7f0863705715a2644fcb185",
+  "prompts": {},
+  "sessions": {
+    "s_d3ef4d265218ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e7e72424-af47-4f09-a72e-289b3cf2627f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alif Siregar <fauzan.alif@tiket.com>"
+    }
+  }
+}
