@@ -1,0 +1,24 @@
+test/fake-bin/gh
+  s_d3ef4d265218ba::t_8c17b22beeca0d 14-15,19,50,68,85,89,93,95-96,98,103,106-107,109
+test/helpers.bash
+  s_d3ef4d265218ba::t_8c17b22beeca0d 78-86,97-98
+test/refresh.bats
+  s_d3ef4d265218ba::t_8c17b22beeca0d 35-37,39,44-45
+  s_d3ef4d265218ba::t_c703de6ff38f77 38,40-43,46-47,99,112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "3596b724d27c0aebafc34654d9327df056e3b3c6",
+  "prompts": {},
+  "sessions": {
+    "s_d3ef4d265218ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e7e72424-af47-4f09-a72e-289b3cf2627f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alif Siregar <fauzan.alif@tiket.com>"
+    }
+  }
+}
