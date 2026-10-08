@@ -9,10 +9,11 @@
 #                would be lost (i.e. everything on it is in main or in a still-labelled PR).
 #   update-prs – after main moves: test-merge main into every open PR into main (except the
 #                Release PR). Conflicting ones get a Conflict warning; clean, ready, same-repo
-#                ones get a Branch update (merge commit, plain push). Ignores Freeze.
+#                ones get a Branch update (merge commit, plain push); warnings on PRs that merge
+#                cleanly again are cleared. With PR_NUMBER, re-checks only that PR. Ignores Freeze.
 #
 # Env: MODE, EVENT_NAME, LABEL, FREEZE_LABEL, CONFLICT_LABEL, SPRINT_NUMBER_INPUT,
-#      FORCE_DELETE_PREVIOUS, GH_TOKEN, GITHUB_REPOSITORY, GITHUB_STEP_SUMMARY
+#      FORCE_DELETE_PREVIOUS, PR_NUMBER, GH_TOKEN, GITHUB_REPOSITORY, GITHUB_STEP_SUMMARY
 
 set -euo pipefail
 
@@ -23,6 +24,7 @@ FREEZE_LABEL="${FREEZE_LABEL:-sprint-frozen}"
 CONFLICT_LABEL="${CONFLICT_LABEL:-has-conflicts}"
 SPRINT_NUMBER_INPUT="${SPRINT_NUMBER_INPUT:-}"
 FORCE_DELETE_PREVIOUS="${FORCE_DELETE_PREVIOUS:-false}"
+PR_NUMBER="${PR_NUMBER:-}" # update-prs only: re-check just this PR
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 SUMMARY_FILE="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 MARKER='<!-- sprint-bot -->'
@@ -224,54 +226,66 @@ ensure_conflict_label() {
   CONFLICT_LABEL_EXISTS=true
 }
 
-# Test-merges main into PR <n>'s head. Gives it a Conflict warning if they conflict, otherwise a
-# Branch update unless it already contains main, is a draft or comes from a fork.
+has_conflict_label() { # <labels, comma-separated>
+  [[ ",$1," == *",$CONFLICT_LABEL,"* ]]
+}
+
+# Test-merges main into PR <n>'s head. Gives it a Conflict warning if they conflict. Otherwise
+# clears any earlier warning and gives it a Branch update unless it already contains main, is a
+# draft or comes from a fork.
 check_pr() { # <pr> <title> <head branch> <is draft> <is fork> <labels, comma-separated>
-  local n="$1" title="$2" branch="$3" draft="$4" fork="$5" labels="$6" head files
+  local n="$1" title="$2" branch="$3" draft="$4" fork="$5" labels="$6" head files outcome
 
   git fetch --quiet origin "pull/$n/head"
   head="$(git rev-parse FETCH_HEAD)"
 
   if git merge-base --is-ancestor origin/main "$head"; then
     echo "✅ #$n already contains main"
-    add_row "$n" "$title" "✅ up to date"
-    return
-  fi
-
-  git checkout --quiet --detach "$head"
-  if ! git merge --no-commit --no-ff origin/main >/dev/null 2>&1; then
-    files="$(git diff --name-only --diff-filter=U | sed 's/^/- `/; s/$/`/')"
-    git merge --abort || true
-    echo "❌ #$n conflicts with main"
-    add_row "$n" "$title" "❌ conflict – warned"
-    upsert_conflict_warning "$n" "### ❌ Conflicts with \`main\`
+    outcome="✅ up to date"
+  else
+    git checkout --quiet --detach "$head"
+    if ! git merge --no-commit --no-ff origin/main >/dev/null 2>&1; then
+      files="$(git diff --name-only --diff-filter=U | sed 's/^/- `/; s/$/`/')"
+      git merge --abort || true
+      echo "❌ #$n conflicts with main"
+      add_row "$n" "$title" "❌ conflict – warned"
+      upsert_conflict_warning "$n" "### ❌ Conflicts with \`main\`
 Commit \`${head:0:7}\` no longer merges cleanly with \`main\`. Conflicting files:
 $files
 
 To resolve, merge \`main\` into your branch, fix the conflicts and push."
-    if [[ ",$labels," != *",$CONFLICT_LABEL,"* ]]; then
-      ensure_conflict_label
-      gh pr edit "$n" --repo "$REPO" --add-label "$CONFLICT_LABEL" >/dev/null
+      if ! has_conflict_label "$labels"; then
+        ensure_conflict_label
+        gh pr edit "$n" --repo "$REPO" --add-label "$CONFLICT_LABEL" >/dev/null
+      fi
+      return
     fi
-    return
+
+    if [[ "$draft" == true || "$fork" == true ]]; then
+      git merge --abort
+      outcome="✅ merges cleanly – $([[ "$draft" == true ]] && echo draft || echo fork), not updated"
+      echo "✅ #$n merges cleanly with main (not updated: $([[ "$draft" == true ]] && echo draft || echo fork))"
+    else
+      git commit --quiet -m "Merge main into $branch"
+      # Plain push: if the author pushed meanwhile it's rejected, and the next run catches up.
+      if git push --quiet origin "HEAD:refs/heads/$branch" 2>/dev/null; then
+        echo "🔀 #$n updated with main"
+        outcome="🔀 updated"
+      else
+        echo "⚠️ #$n push rejected – $branch changed during the run"
+        outcome="⚠️ push rejected – retried on the next run"
+      fi
+    fi
   fi
 
-  if [[ "$draft" == true || "$fork" == true ]]; then
-    git merge --abort
-    echo "✅ #$n merges cleanly with main (not updated: $([[ "$draft" == true ]] && echo draft || echo fork))"
-    add_row "$n" "$title" "✅ merges cleanly – $([[ "$draft" == true ]] && echo draft || echo fork), not updated"
-    return
+  if has_conflict_label "$labels"; then
+    echo "🧹 #$n no longer conflicts with main – clearing its Conflict warning"
+    gh pr edit "$n" --repo "$REPO" --remove-label "$CONFLICT_LABEL" >/dev/null
+    write_comment "$n" "### ✅ No longer conflicts with \`main\`
+This PR merges cleanly with \`main\` again." true "$CONFLICT_MARKER"
+    outcome="$outcome, warning cleared"
   fi
-
-  git commit --quiet -m "Merge main into $branch"
-  # Plain push: if the author pushed meanwhile it's rejected, and the next run catches up.
-  if git push --quiet origin "HEAD:refs/heads/$branch" 2>/dev/null; then
-    echo "🔀 #$n updated with main"
-    add_row "$n" "$title" "🔀 updated"
-  else
-    echo "⚠️ #$n push rejected – $branch changed during the run"
-    add_row "$n" "$title" "⚠️ push rejected – retried on the next run"
-  fi
+  add_row "$n" "$title" "$outcome"
 }
 
 is_frozen() {
@@ -413,10 +427,18 @@ case "$MODE" in
     ;;
 
   update-prs)
+    PR_FILTER="."
+    if [[ -n "$PR_NUMBER" ]]; then
+      if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+        echo "❌ Invalid PR number: $PR_NUMBER"
+        exit 1
+      fi
+      PR_FILTER="select(.number == $PR_NUMBER)"
+    fi
     PR_LIST="$(gh pr list --repo "$REPO" --base main --state open --limit 200 \
       --json number,title,headRefName,isDraft,isCrossRepository,labels \
-      --jq 'sort_by(.number)[] | [.number, .title, .headRefName, .isDraft, .isCrossRepository,
-              ([.labels[].name] | join(","))] | @tsv')"
+      --jq 'sort_by(.number)[] | '"$PR_FILTER"' | [.number, .title, .headRefName, .isDraft,
+              .isCrossRepository, ([.labels[].name] | join(","))] | @tsv')"
 
     # fd 3 so gh/git inside the loop can't swallow the list
     while IFS=$'\t' read -r -u 3 n title head_ref draft cross_repo labels; do
@@ -429,7 +451,11 @@ case "$MODE" in
       check_pr "$n" "$title" "$head_ref" "$draft" "$cross_repo" "$labels"
     done 3<<< "$PR_LIST"
 
-    write_summary "Merged \`main\` into every open PR into \`main\` that merges cleanly, and warned the ones that conflict."
+    if [[ -n "$PR_NUMBER" ]]; then
+      write_summary "Re-checked #$PR_NUMBER against \`main\`."
+    else
+      write_summary "Merged \`main\` into every open PR into \`main\` that merges cleanly, and warned the ones that conflict."
+    fi
     ;;
 
   *)

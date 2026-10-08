@@ -84,14 +84,24 @@ jobs:
   # merges cleanly (Branch update) and warn the ones that conflict (Conflict warning). Runs after
   # Refresh so the Sprint branch takes the new main first, and even if Refresh failed, since it
   # never touches the Sprint branch. Ignores Freeze.
+  # A new commit on a PR carrying has-conflicts re-checks just that PR, clearing the warning once
+  # it merges cleanly again.
   # With github.token the bot's pushes start no further runs, so CI doesn't run on its merge commits.
   update-prs:
     needs: sprint-branch
-    if: ${{ !cancelled() && github.event_name == 'push' }}
+    # NOTE: keep 'has-conflicts' in sync with CONFLICT_LABEL above.
+    if: >-
+      ${{ !cancelled() && (
+        github.event_name == 'push' ||
+        (github.event_name == 'pull_request_target' &&
+          (github.event.action == 'synchronize' || github.event.action == 'reopened') &&
+          contains(github.event.pull_request.labels.*.name, 'has-conflicts'))) }}
     runs-on: ubuntu-latest
 
+    # One group per PR re-check and one for full runs, so a queued full run is never replaced by a
+    # single-PR re-check, or the other way round.
     concurrency:
-      group: update-prs
+      group: update-prs-${{ github.event.pull_request.number || 'all' }}
       cancel-in-progress: false
 
     permissions:
@@ -111,4 +121,5 @@ jobs:
           GH_TOKEN: ${{ secrets.SPRINT_BOT_TOKEN || github.token }}
           EVENT_NAME: ${{ github.event_name }}
           MODE: update-prs
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bash .github/scripts/sprint-branch.sh

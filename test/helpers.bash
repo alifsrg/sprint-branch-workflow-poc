@@ -77,6 +77,14 @@ author_pushes_during_run() { # <branch> <file> <content>
   git --git-dir="$ORIGIN" update-ref -d "refs/staging/$1"
 }
 
+# Resolves <branch>'s conflicts with main the way the Conflict warning says: merge main in, keeping
+# the branch's side, and push.
+resolve_by_merging_main() { # <branch>
+  git -C "$DEV" checkout --quiet "$1"
+  git -C "$DEV" merge --quiet -X ours -m "Merge main into $1" main >/dev/null
+  git -C "$DEV" push --quiet origin "$1"
+}
+
 # Registers an open PR into main from <branch> and publishes refs/pull/<n>/head.
 open_pr() { # <n> <branch> <title> [label...]
   local n="$1" branch="$2" title="$3"

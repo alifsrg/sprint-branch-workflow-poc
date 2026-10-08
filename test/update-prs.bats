@@ -211,11 +211,69 @@ hotfix_main() {
   open_pr 1 feat-a "Feature A"
   open_pr 2 feat-b "Feature B"
   hotfix_main
+  commit feat-c c.txt "c" "Add c"
+  open_pr 3 feat-c "Feature C"
 
   run_script EVENT_NAME=push MODE=update-prs
 
   [ "$status" -eq 0 ]
   assert_contains "$(summary)" "| #1 | Feature A | ❌ conflict – warned |"
   assert_contains "$(summary)" "| #2 | Feature B | 🔀 updated |"
+  assert_contains "$(summary)" "| #3 | Feature C | ✅ up to date |"
   assert_contains "$(summary)" "| #10 | Release sprint 1 | ⏭️ skipped – Release PR |"
+}
+
+@test "clears the Conflict warning once the PR merges cleanly again" {
+  commit feat-a shared.txt "from A" "A edits shared"
+  open_pr 1 feat-a "Feature A"
+  hotfix_main
+  run_script EVENT_NAME=push MODE=update-prs
+  resolve_by_merging_main feat-a
+  : > "$GH_STATE_DIR/writes.jsonl"
+
+  run_script EVENT_NAME=push MODE=update-prs
+
+  [ "$status" -eq 0 ]
+  [ "$(gh_writes 1 | jq -r .op)" = "$(printf 'label.remove\ncomment.edit')" ]
+  assert_contains "$(last_comment 1)" "No longer conflicts with \`main\`"
+  [ "$(jq 'map(select(.issue == 1)) | length' "$GH_STATE_DIR/comments.json")" -eq 1 ]
+  assert_contains "$(summary)" "| #1 | Feature A | ✅ up to date, warning cleared |"
+}
+
+@test "a single-PR re-check clears that PR and touches no other" {
+  commit feat-a shared.txt "from A" "A edits shared"
+  commit feat-b shared.txt "from B" "B edits shared"
+  open_pr 1 feat-a "Feature A"
+  open_pr 2 feat-b "Feature B"
+  hotfix_main
+  run_script EVENT_NAME=push MODE=update-prs
+  resolve_by_merging_main feat-a
+  commit feat-b shared.txt "from B, again" "B edits shared again"
+  feat_b_before="$(remote_sha feat-b)"
+  : > "$GH_STATE_DIR/writes.jsonl"
+
+  run_script EVENT_NAME=pull_request_target MODE=update-prs PR_NUMBER=1
+
+  [ "$status" -eq 0 ]
+  [ "$(gh_writes 1 | jq -r .op)" = "$(printf 'label.remove\ncomment.edit')" ]
+  [ -z "$(gh_writes 2)" ]
+  [ "$(remote_sha feat-b)" = "$feat_b_before" ]
+}
+
+@test "a single-PR re-check updates the warning with the current conflicting files" {
+  commit main other.txt "base" "Add other"
+  commit feat-a shared.txt "from A" "A edits shared"
+  open_pr 1 feat-a "Feature A"
+  commit main other.txt "hotfix" "Hotfix other"
+  hotfix_main
+  run_script EVENT_NAME=push MODE=update-prs
+  commit feat-a other.txt "from A" "A edits other"
+  : > "$GH_STATE_DIR/writes.jsonl"
+
+  run_script EVENT_NAME=pull_request_target MODE=update-prs PR_NUMBER=1
+
+  [ "$status" -eq 0 ]
+  [ "$(gh_writes 1 | jq -r .op)" = comment.edit ]
+  assert_contains "$(last_comment 1)" '- `other.txt`'
+  assert_contains "$(last_comment 1)" '- `shared.txt`'
 }
