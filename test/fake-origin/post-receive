@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Installed in the test origin. Mirrors GitHub: a push to a same-repo PR's head branch moves
+# refs/pull/<n>/head, using the PRs in $GH_STATE_DIR/prs.json.
+
+set -euo pipefail
+
+while read -r _old new ref; do
+  [[ "$ref" == refs/heads/* && "$new" != 0000000000000000000000000000000000000000 ]] || continue
+  for n in $(jq -r --arg b "${ref#refs/heads/}" \
+      '.[] | select(.headRefName == $b and (.isCrossRepository | not)) | .number' \
+      "$GH_STATE_DIR/prs.json"); do
+    git update-ref "refs/pull/$n/head" "$new"
+  done
+done

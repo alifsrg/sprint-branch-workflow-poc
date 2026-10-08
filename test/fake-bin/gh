@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# Fake gh for the test suite. Serves PRs and comments from $GH_STATE_DIR and records every call.
+#
+# State files:
+#   prs.json       [{number, title, headRefName, baseRefName, state, isDraft, isCrossRepository,
+#                    labels: [{name}]}]
+#   comments.json  [{id, issue, body}]
+#   labels.json    [{name}], the repo's labels
+#   calls.log      one line per invocation (args joined by spaces)
+#   writes.jsonl   one JSON object per write:
+#                    {op: "comment.create"|"comment.edit", pr, id, body}
+#                    {op: "label.add"|"label.remove", pr, label}
+#                    {op: "label.create", label}
+#
+# Supports only the subcommands the sprint branch script uses.
+
+set -euo pipefail
+
+STATE_DIR="${GH_STATE_DIR:?GH_STATE_DIR is required}"
+echo "$*" >> "$STATE_DIR/calls.log"
+
+die() { echo "fake gh: $*" >&2; exit 1; }
+
+# Prints <json> through gh's --jq (raw strings, like gh) or as-is.
+output() { # <json> <jq-expr>
+  if [[ -n "$2" ]]; then jq -r "$2" <<< "$1"; else echo "$1"; fi
+}
+
+pr_list() {
+  local base="" head="" state="open" fields="number" jq_expr="" labels=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|--limit) shift 2 ;;
+      --base) base="$2"; shift 2 ;;
+      --head) head="$2"; shift 2 ;;
+      --state) state="$2"; shift 2 ;;
+      --label) labels+=("$2"); shift 2 ;;
+      --json) fields="$2"; shift 2 ;;
+      --jq) jq_expr="$2"; shift 2 ;;
+      *) die "pr list: unsupported argument $1" ;;
+    esac
+  done
+  [[ "$state" == open ]] || die "pr list: only --state open is supported"
+
+  local result
+  result="$(jq -c \
+    --arg base "$base" --arg head "$head" --arg fields "$fields" \
+    --argjson labels "$(printf '%s\n' ${labels[@]+"${labels[@]}"} | jq -R . | jq -cs 'map(select(. != ""))')" '
+    [ .[]
+      | select(.state == "OPEN")
+      | select($base == "" or .baseRefName == $base)
+      | select($head == "" or .headRefName == $head)
+      | select([.labels[].name] as $have | all($labels[]; . as $l | $have | index($l)))
+      | with_entries(select(.key as $k | $fields | split(",") | index($k)))
+    ]' "$STATE_DIR/prs.json")"
+  output "$result" "$jq_expr"
+}
+
+pr_view() {
+  local number="$1" fields="number" jq_expr=""
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) shift 2 ;;
+      --json) fields="$2"; shift 2 ;;
+      --jq) jq_expr="$2"; shift 2 ;;
+      *) die "pr view: unsupported argument $1" ;;
+    esac
+  done
+  local result
+  result="$(jq -ce --argjson n "$number" --arg fields "$fields" '
+    first(.[] | select(.number == $n))
+    | with_entries(select(.key as $k | $fields | split(",") | index($k)))' "$STATE_DIR/prs.json")" \
+    || die "pr view: no PR #$number"
+  output "$result" "$jq_expr"
+}
+
+# Writes stdin to <file> once jq has finished reading it.
+replace_state() { # <file>
+  cat > "$STATE_DIR/$1.tmp"
+  mv "$STATE_DIR/$1.tmp" "$STATE_DIR/$1"
+}
+
+record() { # <jq-object> [jq args...]
+  local expr="$1"
+  shift
+  jq -cn "$@" "$expr" >> "$STATE_DIR/writes.jsonl"
+}
+
+pr_edit() { # <n> [--repo R] (--add-label L | --remove-label L)...
+  local n="$1" op label
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) shift 2 ;;
+      --add-label|--remove-label)
+        op="label.${1#--}"; op="${op%-label}"; label="$2"; shift 2
+        jq -e --arg l "$label" 'any(.[]; .name == $l)' "$STATE_DIR/labels.json" >/dev/null \
+          || die "pr edit: label $label does not exist"
+        jq --argjson n "$n" --arg l "$label" --arg op "$op" '
+          map(if .number == $n then
+                .labels |= (map(select(.name != $l)) + (if $op == "label.add" then [{name: $l}] else [] end))
+              else . end)' "$STATE_DIR/prs.json" | replace_state prs.json
+        record '{op: $op, pr: $n, label: $l}' --arg op "$op" --argjson n "$n" --arg l "$label"
+        ;;
+      *) die "pr edit: unsupported argument $1" ;;
+    esac
+  done
+}
+
+label_list() { # [--repo R] [--limit N] [--json fields] [--jq expr]
+  local fields="name" jq_expr=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|--limit) shift 2 ;;
+      --json) fields="$2"; shift 2 ;;
+      --jq) jq_expr="$2"; shift 2 ;;
+      *) die "label list: unsupported argument $1" ;;
+    esac
+  done
+  output "$(jq -c --arg fields "$fields" \
+    'map(with_entries(select(.key as $k | $fields | split(",") | index($k))))' \
+    "$STATE_DIR/labels.json")" "$jq_expr"
+}
+
+label_create() { # <name> [--repo R] [--color C] [--description D]
+  local name="$1"
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|--color|--description) shift 2 ;;
+      *) die "label create: unsupported argument $1" ;;
+    esac
+  done
+  jq -e --arg l "$name" 'any(.[]; .name == $l)' "$STATE_DIR/labels.json" >/dev/null \
+    && die "label create: $name already exists"
+  jq --arg l "$name" '. + [{name: $l}]' "$STATE_DIR/labels.json" | replace_state labels.json
+  record '{op: "label.create", label: $l}' --arg l "$name"
+}
+
+api() {
+  local method=GET path="" body=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -X) method="$2"; shift 2 ;;
+      --paginate) shift ;;
+      -f) [[ "$2" == body=* ]] || die "api: unsupported field $2"; body="${2#body=}"; shift 2 ;;
+      -*) die "api: unsupported argument $1" ;;
+      *) path="$1"; shift ;;
+    esac
+  done
+
+  local n id tmp="$STATE_DIR/comments.json.tmp"
+  case "$method $path" in
+    "GET repos/"*/issues/*/comments)
+      n="${path%/comments}"; n="${n##*/}"
+      jq -c --argjson n "$n" '[.[] | select(.issue == $n) | {id, body}]' "$STATE_DIR/comments.json"
+      ;;
+    "POST repos/"*/issues/*/comments)
+      n="${path%/comments}"; n="${n##*/}"
+      id="$(jq '(map(.id) | max // 1000) + 1' "$STATE_DIR/comments.json")"
+      jq --argjson n "$n" --argjson id "$id" --arg body "$body" \
+        '. + [{id: $id, issue: $n, body: $body}]' "$STATE_DIR/comments.json" > "$tmp"
+      mv "$tmp" "$STATE_DIR/comments.json"
+      jq -cn --argjson n "$n" --argjson id "$id" --arg body "$body" \
+        '{op: "comment.create", pr: $n, id: $id, body: $body}' >> "$STATE_DIR/writes.jsonl"
+      echo "{\"id\": $id}"
+      ;;
+    "PATCH repos/"*/issues/comments/*)
+      id="${path##*/}"
+      n="$(jq -e --argjson id "$id" 'first(.[] | select(.id == $id)).issue' "$STATE_DIR/comments.json")" \
+        || die "api: no comment $id"
+      jq --argjson id "$id" --arg body "$body" \
+        'map(if .id == $id then .body = $body else . end)' "$STATE_DIR/comments.json" > "$tmp"
+      mv "$tmp" "$STATE_DIR/comments.json"
+      jq -cn --argjson n "$n" --argjson id "$id" --arg body "$body" \
+        '{op: "comment.edit", pr: $n, id: $id, body: $body}' >> "$STATE_DIR/writes.jsonl"
+      echo "{\"id\": $id}"
+      ;;
+    *) die "api: unsupported request $method $path" ;;
+  esac
+}
+
+case "${1:-} ${2:-}" in
+  "pr list") shift 2; pr_list "$@" ;;
+  "pr view") shift 2; pr_view "$@" ;;
+  "pr edit") shift 2; pr_edit "$@" ;;
+  "label list") shift 2; label_list "$@" ;;
+  "label create") shift 2; label_create "$@" ;;
+  api*) shift; api "$@" ;;
+  *) die "unsupported command: $*" ;;
+esac
