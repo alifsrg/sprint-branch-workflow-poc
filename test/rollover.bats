@@ -48,6 +48,6 @@ setup() {
   run_script EVENT_NAME=workflow_dispatch MODE=new-sprint SPRINT_NUMBER_INPUT=1
 
   [ "$status" -eq 1 ]
-  [[ "$output" == *"sprint-1 already exists"* ]]
+  assert_contains "$output" "sprint-1 already exists"
   [ "$(remote_sha sprint-1)" = "$before" ]
 }

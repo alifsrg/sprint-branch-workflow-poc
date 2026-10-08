@@ -8,7 +8,8 @@
 #   new-sprint – create sprint-<N+1> from main with all labelled PRs, delete sprint-<N> if nothing
 #                would be lost (i.e. everything on it is in main or in a still-labelled PR).
 #   update-prs – after main moves: test-merge main into every open PR into main (except the
-#                Release PR) and give each conflicting one a Conflict warning. Ignores Freeze.
+#                Release PR). Conflicting ones get a Conflict warning; clean, ready, same-repo
+#                ones get a Branch update (merge commit, plain push). Ignores Freeze.
 #
 # Env: MODE, EVENT_NAME, LABEL, FREEZE_LABEL, CONFLICT_LABEL, SPRINT_NUMBER_INPUT,
 #      FORCE_DELETE_PREVIOUS, GH_TOKEN, GITHUB_REPOSITORY, GITHUB_STEP_SUMMARY
@@ -223,33 +224,53 @@ ensure_conflict_label() {
   CONFLICT_LABEL_EXISTS=true
 }
 
-# Test-merges main into PR <n>'s head and gives it a Conflict warning if they conflict.
-check_pr() { # <pr> <title> <labels, comma-separated>
-  local n="$1" title="$2" labels="$3" head files
+# Test-merges main into PR <n>'s head. Gives it a Conflict warning if they conflict, otherwise a
+# Branch update unless it already contains main, is a draft or comes from a fork.
+check_pr() { # <pr> <title> <head branch> <is draft> <is fork> <labels, comma-separated>
+  local n="$1" title="$2" branch="$3" draft="$4" fork="$5" labels="$6" head files
 
   git fetch --quiet origin "pull/$n/head"
   head="$(git rev-parse FETCH_HEAD)"
-  git checkout --quiet --detach "$head"
 
-  if git merge --no-commit --no-ff origin/main >/dev/null 2>&1; then
-    git merge --abort 2>/dev/null || true # nothing to abort when already up to date
-    echo "✅ #$n merges cleanly with main"
-    add_row "$n" "$title" "✅ merges cleanly"
+  if git merge-base --is-ancestor origin/main "$head"; then
+    echo "✅ #$n already contains main"
+    add_row "$n" "$title" "✅ up to date"
     return
   fi
 
-  files="$(git diff --name-only --diff-filter=U | sed 's/^/- `/; s/$/`/')"
-  git merge --abort || true
-  echo "❌ #$n conflicts with main"
-  add_row "$n" "$title" "❌ conflict – warned"
-  upsert_conflict_warning "$n" "### ❌ Conflicts with \`main\`
+  git checkout --quiet --detach "$head"
+  if ! git merge --no-commit --no-ff origin/main >/dev/null 2>&1; then
+    files="$(git diff --name-only --diff-filter=U | sed 's/^/- `/; s/$/`/')"
+    git merge --abort || true
+    echo "❌ #$n conflicts with main"
+    add_row "$n" "$title" "❌ conflict – warned"
+    upsert_conflict_warning "$n" "### ❌ Conflicts with \`main\`
 Commit \`${head:0:7}\` no longer merges cleanly with \`main\`. Conflicting files:
 $files
 
 To resolve, merge \`main\` into your branch, fix the conflicts and push."
-  if [[ ",$labels," != *",$CONFLICT_LABEL,"* ]]; then
-    ensure_conflict_label
-    gh pr edit "$n" --repo "$REPO" --add-label "$CONFLICT_LABEL" >/dev/null
+    if [[ ",$labels," != *",$CONFLICT_LABEL,"* ]]; then
+      ensure_conflict_label
+      gh pr edit "$n" --repo "$REPO" --add-label "$CONFLICT_LABEL" >/dev/null
+    fi
+    return
+  fi
+
+  if [[ "$draft" == true || "$fork" == true ]]; then
+    git merge --abort
+    echo "✅ #$n merges cleanly with main (not updated: $([[ "$draft" == true ]] && echo draft || echo fork))"
+    add_row "$n" "$title" "✅ merges cleanly – $([[ "$draft" == true ]] && echo draft || echo fork), not updated"
+    return
+  fi
+
+  git commit --quiet -m "Merge main into $branch"
+  # Plain push: if the author pushed meanwhile it's rejected, and the next run catches up.
+  if git push --quiet origin "HEAD:refs/heads/$branch" 2>/dev/null; then
+    echo "🔀 #$n updated with main"
+    add_row "$n" "$title" "🔀 updated"
+  else
+    echo "⚠️ #$n push rejected – $branch changed during the run"
+    add_row "$n" "$title" "⚠️ push rejected – retried on the next run"
   fi
 }
 
@@ -393,22 +414,22 @@ case "$MODE" in
 
   update-prs)
     PR_LIST="$(gh pr list --repo "$REPO" --base main --state open --limit 200 \
-      --json number,title,headRefName,isCrossRepository,labels \
-      --jq 'sort_by(.number)[] | [.number, .title, .headRefName, .isCrossRepository,
+      --json number,title,headRefName,isDraft,isCrossRepository,labels \
+      --jq 'sort_by(.number)[] | [.number, .title, .headRefName, .isDraft, .isCrossRepository,
               ([.labels[].name] | join(","))] | @tsv')"
 
     # fd 3 so gh/git inside the loop can't swallow the list
-    while IFS=$'\t' read -r -u 3 n title head_ref cross_repo labels; do
+    while IFS=$'\t' read -r -u 3 n title head_ref draft cross_repo labels; do
       [[ -z "$n" ]] && continue
       if [[ "$head_ref" =~ ^sprint-[0-9]+$ && "$cross_repo" == false ]]; then
         echo "⏭️ #$n is the Release PR – skipping"
         add_row "$n" "$title" "⏭️ skipped – Release PR"
         continue
       fi
-      check_pr "$n" "$title" "$labels"
+      check_pr "$n" "$title" "$head_ref" "$draft" "$cross_repo" "$labels"
     done 3<<< "$PR_LIST"
 
-    write_summary "Checked every open PR into \`main\` for conflicts with \`main\`."
+    write_summary "Merged \`main\` into every open PR into \`main\` that merges cleanly, and warned the ones that conflict."
     ;;
 
   *)

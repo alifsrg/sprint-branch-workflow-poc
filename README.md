@@ -5,7 +5,7 @@ Sandbox for testing the sprint branch workflow (`.github/workflows/sprint-branch
 - Label a PR with `merge-to-sprint` to have it merged into the latest `sprint-<N>` branch.
 - Add `sprint-frozen` to the `sprint-<N>` → `main` release PR to pause automatic runs.
 - Actions → **Sprint branch** → **Run workflow** for `refresh`, `rebuild` or `new-sprint`.
-- After every push to `main`, open PRs into `main` that conflict with it get a Conflict warning: a bot comment listing the conflicting files, and the `has-conflicts` label.
+- After every push to `main`, the bot merges `main` into every open PR into `main` that merges cleanly (a Branch update; drafts and fork PRs are skipped). PRs that conflict with it get a Conflict warning instead: a bot comment listing the conflicting files, and the `has-conflicts` label.
 
 ## Tests
 

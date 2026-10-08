@@ -22,7 +22,15 @@ setup_world() {
   DEV="$BATS_TEST_TMPDIR/dev"
   export GH_STATE_DIR="$BATS_TEST_TMPDIR/gh"
 
+  mkdir -p "$GH_STATE_DIR"
+  echo '[]' > "$GH_STATE_DIR/prs.json"
+  echo '[]' > "$GH_STATE_DIR/comments.json"
+  jq -n '[{name: "merge-to-sprint"}, {name: "sprint-frozen"}]' > "$GH_STATE_DIR/labels.json"
+  : > "$GH_STATE_DIR/writes.jsonl"
+  : > "$GH_STATE_DIR/calls.log"
+
   git init --quiet --bare --initial-branch=main "$ORIGIN"
+  cp "$REPO_ROOT/test/fake-origin/post-receive" "$ORIGIN/hooks/post-receive"
   git clone --quiet "$ORIGIN" "$DEV" 2>/dev/null
   git -C "$DEV" symbolic-ref HEAD refs/heads/main
   echo hello > "$DEV/README.md"
@@ -30,12 +38,6 @@ setup_world() {
   git -C "$DEV" commit --quiet -m "Initial commit"
   git -C "$DEV" push --quiet origin main
 
-  mkdir -p "$GH_STATE_DIR"
-  echo '[]' > "$GH_STATE_DIR/prs.json"
-  echo '[]' > "$GH_STATE_DIR/comments.json"
-  jq -n '[{name: "merge-to-sprint"}, {name: "sprint-frozen"}]' > "$GH_STATE_DIR/labels.json"
-  : > "$GH_STATE_DIR/writes.jsonl"
-  : > "$GH_STATE_DIR/calls.log"
 }
 
 # Commits <content> to <file> on <branch> (creating it from main if needed) and pushes the branch.
@@ -61,6 +63,18 @@ create_sprint() { # <N>
 checkout_sprint() { # <N>
   git -C "$DEV" fetch --quiet origin "sprint-$1"
   git -C "$DEV" checkout --quiet -B "sprint-$1" FETCH_HEAD
+}
+
+# Moves origin's <branch> on with a new commit, but leaves refs/pull/<n>/head where it was:
+# an author push that lands while a run is in progress, after it fetched the PR head.
+author_pushes_during_run() { # <branch> <file> <content>
+  git -C "$DEV" checkout --quiet "$1"
+  printf '%s\n' "$3" > "$DEV/$2"
+  git -C "$DEV" add "$2"
+  git -C "$DEV" commit --quiet -m "Author commit during run"
+  git -C "$DEV" push --quiet origin "$1:refs/staging/$1"
+  git --git-dir="$ORIGIN" update-ref "refs/heads/$1" "refs/staging/$1"
+  git --git-dir="$ORIGIN" update-ref -d "refs/staging/$1"
 }
 
 # Registers an open PR into main from <branch> and publishes refs/pull/<n>/head.
@@ -122,10 +136,26 @@ _run_in() { # <dir> [NAME=value...] <command...>
   cd "$1" && shift && env "$@"
 }
 
+# ---------- assertions ----------
+
+# Fails the test unless <haystack> contains <needle>. Use this rather than a bare [[ ]]: with
+# bash 3.2 (macOS) a failing [[ ]] mid-test does not fail it.
+assert_contains() { # <haystack> <needle>
+  if [[ "$1" != *"$2"* ]]; then
+    printf 'expected to contain: %s\nactual: %s\n' "$2" "$1" >&2
+    return 1
+  fi
+}
+
 # ---------- observations ----------
 
 remote_sha() { # <ref>
   git --git-dir="$ORIGIN" rev-parse "$1"
+}
+
+# Subject of the commit at <ref>.
+remote_subject() { # <ref>
+  git --git-dir="$ORIGIN" log -1 --format=%s "$1"
 }
 
 # Subjects of commits on <ref> that are not on main, oldest first.

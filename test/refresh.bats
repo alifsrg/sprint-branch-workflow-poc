@@ -42,7 +42,7 @@ setup() {
 
   [ "$status" -eq 0 ]
   [ "$(gh_writes 1 | jq -r .op)" = comment.edit ]
-  [[ "$(last_comment 1)" == *"Included in \`sprint-1\`"* ]]
+  assert_contains "$(last_comment 1)" "Included in \`sprint-1\`"
 }
 
 @test "does not merge a conflicting Sprint candidate and comments with its files" {
@@ -58,8 +58,8 @@ setup() {
   run ! remote_contains sprint-1 refs/pull/2/head
   [ -z "$(gh_writes 1)" ]
   [ "$(gh_writes 2 | jq -r .op)" = comment.create ]
-  [[ "$(last_comment 2)" == *"Merge conflict with \`sprint-1\`"* ]]
-  [[ "$(last_comment 2)" == *'- `shared.txt`'* ]]
+  assert_contains "$(last_comment 2)" "Merge conflict with \`sprint-1\`"
+  assert_contains "$(last_comment 2)" '- `shared.txt`'
 }
 
 @test "reports a Sprint candidate rebased after joining as needing a rebuild" {
@@ -77,8 +77,8 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$(remote_sha sprint-1)" = "$before" ]
   [ "$(gh_writes 1 | jq -r .op)" = comment.create ]
-  [[ "$(last_comment 1)" == *"Not updated in \`sprint-1\`"* ]]
-  [[ "$(last_comment 1)" == *"mode \`rebuild\`"* ]]
+  assert_contains "$(last_comment 1)" "Not updated in \`sprint-1\`"
+  assert_contains "$(last_comment 1)" "mode \`rebuild\`"
 }
 
 @test "reports a Stale PR with a comment" {
@@ -92,8 +92,8 @@ setup() {
   [ "$status" -eq 0 ]
   remote_contains sprint-1 refs/pull/1/head
   [ "$(gh_writes 1 | jq -r .op)" = comment.create ]
-  [[ "$(last_comment 1)" == *"Still in \`sprint-1\`"* ]]
-  [[ "$(last_comment 1)" == *"no longer has the \`merge-to-sprint\` label"* ]]
+  assert_contains "$(last_comment 1)" "Still in \`sprint-1\`"
+  assert_contains "$(last_comment 1)" "no longer has the \`merge-to-sprint\` label"
 }
 
 @test "an automatic run skips while the Sprint branch is frozen" {

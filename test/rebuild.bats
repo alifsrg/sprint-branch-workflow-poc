@@ -22,7 +22,7 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$(remote_subjects sprint-1)" = "$(printf 'Add b\nMerge PR #2: Feature B')" ]
   [ "$(gh_writes 1 | tail -1 | jq -r .op)" = comment.edit ]
-  [[ "$(last_comment 1)" == *"Removed from \`sprint-1\`"* ]]
+  assert_contains "$(last_comment 1)" "Removed from \`sprint-1\`"
 }
 
 @test "leaves the Sprint branch untouched when the rebuilt content is identical" {

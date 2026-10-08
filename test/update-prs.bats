@@ -23,9 +23,9 @@ hotfix_main() {
 
   [ "$status" -eq 0 ]
   [ "$(gh_writes 1 | jq -r .op)" = "$(printf 'comment.create\nlabel.add')" ]
-  [[ "$(last_comment 1)" == *"Conflicts with \`main\`"* ]]
-  [[ "$(last_comment 1)" == *'- `shared.txt`'* ]]
-  [[ "$(last_comment 1)" == *"merge \`main\` into your branch"* ]]
+  assert_contains "$(last_comment 1)" "Conflicts with \`main\`"
+  assert_contains "$(last_comment 1)" '- `shared.txt`'
+  assert_contains "$(last_comment 1)" "merge \`main\` into your branch"
   [ "$(gh_writes 1 | jq -r 'select(.op == "label.add").label')" = has-conflicts ]
 }
 
@@ -42,7 +42,7 @@ hotfix_main() {
   [ "$(gh_writes | jq -r 'select(.op == "label.create").label')" = has-conflicts ]
 }
 
-@test "leaves a PR that merges cleanly with main untouched" {
+@test "gives a clean, ready PR a Branch update merging main into its branch" {
   commit feat-a a.txt "a" "Add a"
   open_pr 1 feat-a "Feature A"
   before="$(remote_sha feat-a)"
@@ -52,7 +52,71 @@ hotfix_main() {
 
   [ "$status" -eq 0 ]
   [ -z "$(gh_writes)" ]
+  [ "$(remote_subject feat-a)" = "Merge main into feat-a" ]
+  [ "$(remote_sha feat-a^1)" = "$before" ]
+  [ "$(remote_sha feat-a^2)" = "$(remote_sha main)" ]
+}
+
+@test "leaves a PR that already contains main alone" {
+  commit feat-a a.txt "a" "Add a"
+  open_pr 1 feat-a "Feature A"
+  before="$(remote_sha feat-a)"
+
+  run_script EVENT_NAME=push MODE=update-prs
+
+  [ "$status" -eq 0 ]
+  [ -z "$(gh_writes)" ]
   [ "$(remote_sha feat-a)" = "$before" ]
+}
+
+@test "never pushes to draft or fork PRs" {
+  commit feat-a a.txt "a" "Add a"
+  commit feat-b b.txt "b" "Add b"
+  open_pr 1 feat-a "Draft feature"
+  open_pr 2 feat-b "Fork feature"
+  set_pr_field 1 isDraft true
+  set_pr_field 2 isCrossRepository true
+  draft_before="$(remote_sha feat-a)"
+  fork_before="$(remote_sha feat-b)"
+  hotfix_main
+
+  run_script EVENT_NAME=push MODE=update-prs
+
+  [ "$status" -eq 0 ]
+  [ "$(remote_sha feat-a)" = "$draft_before" ]
+  [ "$(remote_sha feat-b)" = "$fork_before" ]
+  [ -z "$(gh_writes)" ]
+}
+
+@test "records a rejected push and still updates the remaining PRs" {
+  commit feat-a a.txt "a" "Add a"
+  commit feat-b b.txt "b" "Add b"
+  open_pr 1 feat-a "Feature A"
+  open_pr 2 feat-b "Feature B"
+  hotfix_main
+  author_pushes_during_run feat-a a.txt "a, during the run"
+  author_head="$(remote_sha feat-a)"
+
+  run_script EVENT_NAME=push MODE=update-prs
+
+  [ "$status" -eq 0 ]
+  [ "$(remote_sha feat-a)" = "$author_head" ]
+  [ "$(remote_subject feat-b)" = "Merge main into feat-b" ]
+  assert_contains "$(summary)" "| #1 | Feature A | ⚠️ push rejected"
+}
+
+@test "a Sprint candidate's updated head is picked up by the next Refresh" {
+  commit feat-a a.txt "a" "Add a"
+  open_pr 1 feat-a "Feature A" merge-to-sprint
+  run_script
+  hotfix_main
+  run_script EVENT_NAME=push MODE=update-prs
+
+  run_script
+
+  [ "$status" -eq 0 ]
+  [ "$(remote_subject feat-a)" = "Merge main into feat-a" ]
+  remote_contains sprint-1 feat-a
 }
 
 @test "gives draft and fork PRs a Conflict warning too" {
@@ -109,7 +173,7 @@ hotfix_main() {
 
   [ "$status" -eq 0 ]
   [ "$(gh_writes 1 | jq -r .op)" = comment.edit ]
-  [[ "$(last_comment 1)" == *"$(git -C "$DEV" rev-parse --short=7 feat-a)"* ]]
+  assert_contains "$(last_comment 1)" "$(git -C "$DEV" rev-parse --short=7 feat-a)"
 }
 
 @test "keeps the Conflict warning and the Refresh comment on a Sprint candidate apart" {
@@ -151,7 +215,7 @@ hotfix_main() {
   run_script EVENT_NAME=push MODE=update-prs
 
   [ "$status" -eq 0 ]
-  [[ "$(summary)" == *"| #1 | Feature A | ❌ conflict – warned |"* ]]
-  [[ "$(summary)" == *"| #2 | Feature B | ✅ merges cleanly |"* ]]
-  [[ "$(summary)" == *"| #10 | Release sprint 1 | ⏭️ skipped – Release PR |"* ]]
+  assert_contains "$(summary)" "| #1 | Feature A | ❌ conflict – warned |"
+  assert_contains "$(summary)" "| #2 | Feature B | 🔀 updated |"
+  assert_contains "$(summary)" "| #10 | Release sprint 1 | ⏭️ skipped – Release PR |"
 }
