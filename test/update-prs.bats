@@ -86,6 +86,8 @@ hotfix_main() {
   [ "$(remote_sha feat-a)" = "$draft_before" ]
   [ "$(remote_sha feat-b)" = "$fork_before" ]
   [ -z "$(gh_writes)" ]
+  assert_contains "$(summary)" "| #1 | Draft feature | ✅ merges cleanly – draft, not updated |"
+  assert_contains "$(summary)" "| #2 | Fork feature | ✅ merges cleanly – fork, not updated |"
 }
 
 @test "records a rejected push and still updates the remaining PRs" {
@@ -103,6 +105,19 @@ hotfix_main() {
   [ "$(remote_sha feat-a)" = "$author_head" ]
   [ "$(remote_subject feat-b)" = "Merge main into feat-b" ]
   assert_contains "$(summary)" "| #1 | Feature A | ⚠️ push rejected"
+}
+
+@test "reports a push refused for another reason as failed, not as retried" {
+  commit feat-a a.txt "a" "Add a"
+  open_pr 1 feat-a "Feature A"
+  hotfix_main
+  refuse_pushes "refusing to allow a GitHub App to create or update workflow without workflows permission"
+
+  run_script EVENT_NAME=push MODE=update-prs
+
+  [ "$status" -eq 0 ]
+  assert_contains "$(summary)" "| #1 | Feature A | ❌ push failed"
+  assert_contains "$output" "workflows permission"
 }
 
 @test "a Sprint candidate's updated head is picked up by the next Refresh" {
@@ -152,7 +167,7 @@ hotfix_main() {
   open_pr 1 feat-a "Feature A"
   hotfix_main
   run_script EVENT_NAME=push MODE=update-prs
-  : > "$GH_STATE_DIR/writes.jsonl"
+  reset_gh_writes
 
   run_script EVENT_NAME=push MODE=update-prs
 
@@ -167,7 +182,7 @@ hotfix_main() {
   run_script EVENT_NAME=push MODE=update-prs
   commit feat-a shared.txt "from A, again" "A edits shared again"
   push_pr_head 1 feat-a
-  : > "$GH_STATE_DIR/writes.jsonl"
+  reset_gh_writes
 
   run_script EVENT_NAME=push MODE=update-prs
 
@@ -229,14 +244,14 @@ hotfix_main() {
   hotfix_main
   run_script EVENT_NAME=push MODE=update-prs
   resolve_by_merging_main feat-a
-  : > "$GH_STATE_DIR/writes.jsonl"
+  reset_gh_writes
 
   run_script EVENT_NAME=push MODE=update-prs
 
   [ "$status" -eq 0 ]
   [ "$(gh_writes 1 | jq -r .op)" = "$(printf 'label.remove\ncomment.edit')" ]
   assert_contains "$(last_comment 1)" "No longer conflicts with \`main\`"
-  [ "$(jq 'map(select(.issue == 1)) | length' "$GH_STATE_DIR/comments.json")" -eq 1 ]
+  [ "$(comment_count 1)" -eq 1 ]
   assert_contains "$(summary)" "| #1 | Feature A | ✅ up to date, warning cleared |"
 }
 
@@ -250,7 +265,7 @@ hotfix_main() {
   resolve_by_merging_main feat-a
   commit feat-b shared.txt "from B, again" "B edits shared again"
   feat_b_before="$(remote_sha feat-b)"
-  : > "$GH_STATE_DIR/writes.jsonl"
+  reset_gh_writes
 
   run_script EVENT_NAME=pull_request_target MODE=update-prs PR_NUMBER=1
 
@@ -268,7 +283,7 @@ hotfix_main() {
   hotfix_main
   run_script EVENT_NAME=push MODE=update-prs
   commit feat-a other.txt "from A" "A edits other"
-  : > "$GH_STATE_DIR/writes.jsonl"
+  reset_gh_writes
 
   run_script EVENT_NAME=pull_request_target MODE=update-prs PR_NUMBER=1
 
@@ -276,4 +291,21 @@ hotfix_main() {
   [ "$(gh_writes 1 | jq -r .op)" = comment.edit ]
   assert_contains "$(last_comment 1)" '- `other.txt`'
   assert_contains "$(last_comment 1)" '- `shared.txt`'
+}
+
+@test "gives a PR that merges cleanly again a Branch update and clears its warning" {
+  commit feat-a shared.txt "from A" "A edits shared"
+  open_pr 1 feat-a "Feature A"
+  hotfix_main
+  run_script EVENT_NAME=push MODE=update-prs
+  commit feat-a shared.txt "base" "A reverts shared"
+  commit feat-a a.txt "a" "Add a"
+  reset_gh_writes
+
+  run_script EVENT_NAME=push MODE=update-prs
+
+  [ "$status" -eq 0 ]
+  [ "$(remote_subject feat-a)" = "Merge main into feat-a" ]
+  [ "$(gh_writes 1 | jq -r .op)" = "$(printf 'label.remove\ncomment.edit')" ]
+  assert_contains "$(summary)" "| #1 | Feature A | 🔀 updated, warning cleared |"
 }

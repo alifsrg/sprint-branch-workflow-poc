@@ -73,6 +73,7 @@ write_comment() { # <pr> <body> <only_existing> <marker>
 upsert_comment() { write_comment "$1" "$2" false "$MARKER"; }
 resolve_comment() { write_comment "$1" "$2" true "$MARKER"; } # only updates an existing bot comment
 upsert_conflict_warning() { write_comment "$1" "$2" false "$CONFLICT_MARKER"; }
+resolve_conflict_warning() { write_comment "$1" "$2" true "$CONFLICT_MARKER"; } # only updates an existing one
 
 # Latest "Merge PR #<n>:" commit on sprint (not yet in main), empty if none.
 sprint_merge_commit() { # <pr> <ref>
@@ -234,7 +235,7 @@ has_conflict_label() { # <labels, comma-separated>
 # clears any earlier warning and gives it a Branch update unless it already contains main, is a
 # draft or comes from a fork.
 check_pr() { # <pr> <title> <head branch> <is draft> <is fork> <labels, comma-separated>
-  local n="$1" title="$2" branch="$3" draft="$4" fork="$5" labels="$6" head files outcome
+  local n="$1" title="$2" branch="$3" draft="$4" fork="$5" labels="$6" head files outcome kind err
 
   git fetch --quiet origin "pull/$n/head"
   head="$(git rev-parse FETCH_HEAD)"
@@ -263,17 +264,22 @@ To resolve, merge \`main\` into your branch, fix the conflicts and push."
 
     if [[ "$draft" == true || "$fork" == true ]]; then
       git merge --abort
-      outcome="✅ merges cleanly – $([[ "$draft" == true ]] && echo draft || echo fork), not updated"
-      echo "✅ #$n merges cleanly with main (not updated: $([[ "$draft" == true ]] && echo draft || echo fork))"
+      kind="$([[ "$draft" == true ]] && echo draft || echo fork)"
+      echo "✅ #$n merges cleanly with main (not updated: $kind)"
+      outcome="✅ merges cleanly – $kind, not updated"
     else
       git commit --quiet -m "Merge main into $branch"
       # Plain push: if the author pushed meanwhile it's rejected, and the next run catches up.
-      if git push --quiet origin "HEAD:refs/heads/$branch" 2>/dev/null; then
+      if err="$(git push --quiet origin "HEAD:refs/heads/$branch" 2>&1)"; then
         echo "🔀 #$n updated with main"
         outcome="🔀 updated"
-      else
+      elif [[ "$err" == *"(non-fast-forward)"* || "$err" == *"(fetch first)"* ]]; then
         echo "⚠️ #$n push rejected – $branch changed during the run"
         outcome="⚠️ push rejected – retried on the next run"
+      else
+        echo "❌ #$n push failed:"
+        echo "$err"
+        outcome="❌ push failed – see the run log"
       fi
     fi
   fi
@@ -281,8 +287,8 @@ To resolve, merge \`main\` into your branch, fix the conflicts and push."
   if has_conflict_label "$labels"; then
     echo "🧹 #$n no longer conflicts with main – clearing its Conflict warning"
     gh pr edit "$n" --repo "$REPO" --remove-label "$CONFLICT_LABEL" >/dev/null
-    write_comment "$n" "### ✅ No longer conflicts with \`main\`
-This PR merges cleanly with \`main\` again." true "$CONFLICT_MARKER"
+    resolve_conflict_warning "$n" "### ✅ No longer conflicts with \`main\`
+This PR merges cleanly with \`main\` again."
     outcome="$outcome, warning cleared"
   fi
   add_row "$n" "$title" "$outcome"

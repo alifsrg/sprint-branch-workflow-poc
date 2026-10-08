@@ -37,7 +37,6 @@ setup_world() {
   git -C "$DEV" add README.md
   git -C "$DEV" commit --quiet -m "Initial commit"
   git -C "$DEV" push --quiet origin main
-
 }
 
 # Commits <content> to <file> on <branch> (creating it from main if needed) and pushes the branch.
@@ -83,6 +82,17 @@ resolve_by_merging_main() { # <branch>
   git -C "$DEV" checkout --quiet "$1"
   git -C "$DEV" merge --quiet -X ours -m "Merge main into $1" main >/dev/null
   git -C "$DEV" push --quiet origin "$1"
+}
+
+# Makes origin refuse every push with <message>, as GitHub does for a push it doesn't allow.
+refuse_pushes() { # <message>
+  printf '#!/usr/bin/env bash\necho %q >&2\nexit 1\n' "$1" > "$ORIGIN/hooks/pre-receive"
+  chmod +x "$ORIGIN/hooks/pre-receive"
+}
+
+# Forgets the gh writes recorded so far, so a test can check only what the next run writes.
+reset_gh_writes() {
+  : > "$GH_STATE_DIR/writes.jsonl"
 }
 
 # Registers an open PR into main from <branch> and publishes refs/pull/<n>/head.
@@ -188,6 +198,11 @@ gh_writes() { # [n]
   else
     cat "$GH_STATE_DIR/writes.jsonl"
   fi
+}
+
+# Number of comments currently on PR <n>.
+comment_count() { # <n>
+  jq --argjson n "$1" 'map(select(.issue == $n)) | length' "$GH_STATE_DIR/comments.json"
 }
 
 # Body of the last comment written on PR <n>.
