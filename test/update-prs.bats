@@ -72,8 +72,7 @@ hotfix_main() {
 }
 
 @test "skips the Release PR" {
-  git -C "$DEV" fetch --quiet origin sprint-1
-  git -C "$DEV" checkout --quiet -B sprint-1 FETCH_HEAD
+  checkout_sprint 1
   commit sprint-1 shared.txt "from sprint" "Sprint edits shared"
   open_pr 10 sprint-1 "Release sprint 1"
   hotfix_main

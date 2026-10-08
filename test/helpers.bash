@@ -57,6 +57,12 @@ create_sprint() { # <N>
   git -C "$DEV" push --quiet origin "main:refs/heads/sprint-$1"
 }
 
+# Checks out origin's sprint-<N> in the dev clone, so `commit sprint-<N> ...` adds to it.
+checkout_sprint() { # <N>
+  git -C "$DEV" fetch --quiet origin "sprint-$1"
+  git -C "$DEV" checkout --quiet -B "sprint-$1" FETCH_HEAD
+}
+
 # Registers an open PR into main from <branch> and publishes refs/pull/<n>/head.
 open_pr() { # <n> <branch> <title> [label...]
   local n="$1" branch="$2" title="$3"
@@ -151,6 +157,7 @@ last_comment() { # <n>
   gh_writes "$1" | jq -rs 'map(select(.op | startswith("comment."))) | last.body // empty'
 }
 
+# Succeeds if <branch> exists on origin.
 remote_has_branch() { # <branch>
   git --git-dir="$ORIGIN" show-ref --verify --quiet "refs/heads/$1"
 }

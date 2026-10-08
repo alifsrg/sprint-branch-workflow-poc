@@ -2,6 +2,7 @@ name: Sprint branch
 
 # Keeps sprint-<N> = main + every open PR labelled "merge-to-sprint".
 # Automatic events always run "refresh"; "rebuild" and "new-sprint" are manual only.
+# A push to main also runs "update-prs" afterwards, which gives conflicting open PRs a Conflict warning.
 # Logic lives in .github/scripts/sprint-branch.sh.
 
 on:

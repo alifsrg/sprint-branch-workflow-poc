@@ -20,8 +20,7 @@ setup() {
 }
 
 @test "refuses and deletes nothing when the previous Sprint branch has commits that would be lost" {
-  git -C "$DEV" fetch --quiet origin sprint-1
-  git -C "$DEV" checkout --quiet -B sprint-1 FETCH_HEAD
+  checkout_sprint 1
   commit sprint-1 direct.txt "direct" "Direct commit on sprint"
   before="$(remote_sha sprint-1)"
 
@@ -33,8 +32,7 @@ setup() {
 }
 
 @test "proceeds with force_delete_previous when the previous Sprint branch has commits that would be lost" {
-  git -C "$DEV" fetch --quiet origin sprint-1
-  git -C "$DEV" checkout --quiet -B sprint-1 FETCH_HEAD
+  checkout_sprint 1
   commit sprint-1 direct.txt "direct" "Direct commit on sprint"
 
   run_script EVENT_NAME=workflow_dispatch MODE=new-sprint FORCE_DELETE_PREVIOUS=true
@@ -50,5 +48,6 @@ setup() {
   run_script EVENT_NAME=workflow_dispatch MODE=new-sprint SPRINT_NUMBER_INPUT=1
 
   [ "$status" -eq 1 ]
+  [[ "$output" == *"sprint-1 already exists"* ]]
   [ "$(remote_sha sprint-1)" = "$before" ]
 }

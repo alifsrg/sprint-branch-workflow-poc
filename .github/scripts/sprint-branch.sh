@@ -212,6 +212,7 @@ commits_lost_on_delete() { # <ref>
 
 CONFLICT_LABEL_EXISTS=false
 
+# Creates the Conflict warning label unless the repo already has it. Checks at most once per run.
 ensure_conflict_label() {
   [[ "$CONFLICT_LABEL_EXISTS" == true ]] && return 0
   if [[ "$(gh label list --repo "$REPO" --limit 500 --json name \
