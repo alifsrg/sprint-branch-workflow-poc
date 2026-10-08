@@ -136,3 +136,7 @@ gh_writes() { # [n]
 last_comment() { # <n>
   gh_writes "$1" | tail -1 | jq -r .body
 }
+
+remote_has_branch() { # <branch>
+  git --git-dir="$ORIGIN" show-ref --verify --quiet "refs/heads/$1"
+}
