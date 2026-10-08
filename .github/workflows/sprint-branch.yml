@@ -40,6 +40,7 @@ permissions:
 env:
   LABEL: merge-to-sprint
   FREEZE_LABEL: sprint-frozen
+  CONFLICT_LABEL: has-conflicts
 
 jobs:
   sprint-branch:
@@ -75,4 +76,35 @@ jobs:
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'refresh' }}
           SPRINT_NUMBER_INPUT: ${{ inputs.sprint_number }}
           FORCE_DELETE_PREVIOUS: ${{ inputs.force_delete_previous }}
+        run: bash .github/scripts/sprint-branch.sh
+
+  # After main moves (Release PR merge or Hotfix): give every open PR into main that conflicts
+  # with it a Conflict warning. Runs after Refresh so the Sprint branch takes the new main first,
+  # and even if Refresh failed, since it never touches the Sprint branch. Ignores Freeze.
+  update-prs:
+    needs: sprint-branch
+    if: ${{ !cancelled() && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: update-prs
+      cancel-in-progress: false
+
+    permissions:
+      contents: read
+      pull-requests: write # ✅ Needed to comment on and label PRs
+      issues: write # ✅ Needed to create the has-conflicts label
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SPRINT_BOT_TOKEN || github.token }}
+
+      - name: Check open PRs for conflicts with main
+        env:
+          GH_TOKEN: ${{ secrets.SPRINT_BOT_TOKEN || github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          MODE: update-prs
         run: bash .github/scripts/sprint-branch.sh

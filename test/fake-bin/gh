@@ -2,10 +2,15 @@
 # Fake gh for the test suite. Serves PRs and comments from $GH_STATE_DIR and records every call.
 #
 # State files:
-#   prs.json       [{number, title, headRefName, baseRefName, state, isDraft, labels: [{name}]}]
+#   prs.json       [{number, title, headRefName, baseRefName, state, isDraft, isCrossRepository,
+#                    labels: [{name}]}]
 #   comments.json  [{id, issue, body}]
+#   labels.json    [{name}], the repo's labels
 #   calls.log      one line per invocation (args joined by spaces)
-#   writes.jsonl   one JSON object per write: {op: "comment.create"|"comment.edit", pr, id, body}
+#   writes.jsonl   one JSON object per write:
+#                    {op: "comment.create"|"comment.edit", pr, id, body}
+#                    {op: "label.add"|"label.remove", pr, label}
+#                    {op: "label.create", label}
 #
 # Supports only the subcommands the sprint branch script uses.
 
@@ -70,6 +75,69 @@ pr_view() {
   output "$result" "$jq_expr"
 }
 
+# Writes stdin to <file> once jq has finished reading it.
+replace_state() { # <file>
+  cat > "$STATE_DIR/$1.tmp"
+  mv "$STATE_DIR/$1.tmp" "$STATE_DIR/$1"
+}
+
+record() { # <jq-object> [jq args...]
+  local expr="$1"
+  shift
+  jq -cn "$@" "$expr" >> "$STATE_DIR/writes.jsonl"
+}
+
+pr_edit() { # <n> [--repo R] (--add-label L | --remove-label L)...
+  local n="$1" op label
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) shift 2 ;;
+      --add-label|--remove-label)
+        op="label.${1#--}"; op="${op%-label}"; label="$2"; shift 2
+        jq -e --arg l "$label" 'any(.[]; .name == $l)' "$STATE_DIR/labels.json" >/dev/null \
+          || die "pr edit: label $label does not exist"
+        jq --argjson n "$n" --arg l "$label" --arg op "$op" '
+          map(if .number == $n then
+                .labels |= (map(select(.name != $l)) + (if $op == "label.add" then [{name: $l}] else [] end))
+              else . end)' "$STATE_DIR/prs.json" | replace_state prs.json
+        record '{op: $op, pr: $n, label: $l}' --arg op "$op" --argjson n "$n" --arg l "$label"
+        ;;
+      *) die "pr edit: unsupported argument $1" ;;
+    esac
+  done
+}
+
+label_list() { # [--repo R] [--limit N] [--json fields] [--jq expr]
+  local fields="name" jq_expr=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|--limit) shift 2 ;;
+      --json) fields="$2"; shift 2 ;;
+      --jq) jq_expr="$2"; shift 2 ;;
+      *) die "label list: unsupported argument $1" ;;
+    esac
+  done
+  output "$(jq -c --arg fields "$fields" \
+    'map(with_entries(select(.key as $k | $fields | split(",") | index($k))))' \
+    "$STATE_DIR/labels.json")" "$jq_expr"
+}
+
+label_create() { # <name> [--repo R] [--color C] [--description D]
+  local name="$1"
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|--color|--description) shift 2 ;;
+      *) die "label create: unsupported argument $1" ;;
+    esac
+  done
+  jq -e --arg l "$name" 'any(.[]; .name == $l)' "$STATE_DIR/labels.json" >/dev/null \
+    && die "label create: $name already exists"
+  jq --arg l "$name" '. + [{name: $l}]' "$STATE_DIR/labels.json" | replace_state labels.json
+  record '{op: "label.create", label: $l}' --arg l "$name"
+}
+
 api() {
   local method=GET path="" body=""
   while [[ $# -gt 0 ]]; do
@@ -116,6 +184,9 @@ api() {
 case "${1:-} ${2:-}" in
   "pr list") shift 2; pr_list "$@" ;;
   "pr view") shift 2; pr_view "$@" ;;
+  "pr edit") shift 2; pr_edit "$@" ;;
+  "label list") shift 2; label_list "$@" ;;
+  "label create") shift 2; label_create "$@" ;;
   api*) shift; api "$@" ;;
   *) die "unsupported command: $*" ;;
 esac

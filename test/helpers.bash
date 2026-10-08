@@ -33,6 +33,7 @@ setup_world() {
   mkdir -p "$GH_STATE_DIR"
   echo '[]' > "$GH_STATE_DIR/prs.json"
   echo '[]' > "$GH_STATE_DIR/comments.json"
+  jq -n '[{name: "merge-to-sprint"}, {name: "sprint-frozen"}]' > "$GH_STATE_DIR/labels.json"
   : > "$GH_STATE_DIR/writes.jsonl"
   : > "$GH_STATE_DIR/calls.log"
 }
@@ -64,7 +65,7 @@ open_pr() { # <n> <branch> <title> [label...]
   labels="$(printf '%s\n' "$@" | jq -R . | jq -cs 'map(select(. != "") | {name: .})')"
   jq --argjson n "$n" --arg branch "$branch" --arg title "$title" --argjson labels "$labels" \
     '. + [{number: $n, title: $title, headRefName: $branch, baseRefName: "main",
-           state: "OPEN", isDraft: false, labels: $labels}]' \
+           state: "OPEN", isDraft: false, isCrossRepository: false, labels: $labels}]' \
     "$GH_STATE_DIR/prs.json" > "$GH_STATE_DIR/prs.json.tmp"
   mv "$GH_STATE_DIR/prs.json.tmp" "$GH_STATE_DIR/prs.json"
   push_pr_head "$n" "$branch"
@@ -81,6 +82,14 @@ seed_bot_comment() { # <n> <body>
     '. + [{id: ((map(.id) | max // 1000) + 1), issue: $n, body: $body}]' \
     "$GH_STATE_DIR/comments.json" > "$GH_STATE_DIR/comments.json.tmp"
   mv "$GH_STATE_DIR/comments.json.tmp" "$GH_STATE_DIR/comments.json"
+}
+
+# Sets <field> of PR <n> to the JSON <value>, e.g. set_pr_field 1 isDraft true.
+set_pr_field() { # <n> <field> <value>
+  jq --argjson n "$1" --arg f "$2" --argjson v "$3" \
+    'map(if .number == $n then .[$f] = $v else . end)' \
+    "$GH_STATE_DIR/prs.json" > "$GH_STATE_DIR/prs.json.tmp"
+  mv "$GH_STATE_DIR/prs.json.tmp" "$GH_STATE_DIR/prs.json"
 }
 
 # Removes <label> from PR <n>.
@@ -123,6 +132,11 @@ remote_contains() { # <ref> <ancestor>
   git --git-dir="$ORIGIN" merge-base --is-ancestor "$(remote_sha "$2")" "$(remote_sha "$1")"
 }
 
+# The run summary written to $GITHUB_STEP_SUMMARY.
+summary() {
+  cat "$BATS_TEST_TMPDIR/summary.md"
+}
+
 # Recorded gh writes as JSON lines, optionally only those on PR <n>.
 gh_writes() { # [n]
   if [[ -n "${1:-}" ]]; then
@@ -134,7 +148,7 @@ gh_writes() { # [n]
 
 # Body of the last comment written on PR <n>.
 last_comment() { # <n>
-  gh_writes "$1" | tail -1 | jq -r .body
+  gh_writes "$1" | jq -rs 'map(select(.op | startswith("comment."))) | last.body // empty'
 }
 
 remote_has_branch() { # <branch>
