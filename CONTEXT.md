@@ -32,6 +32,18 @@ _Avoid_: Auto-update, sync, rebase
 **Conflict warning**:
 The bot's notice, a comment plus the `has-conflicts` label, on an open PR that no longer merges cleanly with `main`.
 
+**Sprint conflict**:
+A Sprint candidate that merges cleanly with `main` but conflicts with the Sprint branch, because of another Sprint candidate already in it. The author of the candidate that fails to join the Sprint branch resolves it. A candidate that also conflicts with `main` has a Conflict warning instead, not a Sprint conflict.
+_Avoid_: Candidate conflict, cross-PR conflict
+
+**Resolution PR**:
+A throwaway PR, opened by the bot, in which a Sprint conflict is resolved and approved. It runs from a copy of the conflicting candidate into a snapshot of the Sprint branch, so neither the candidate's branch nor the Sprint branch changes. It is never merged.
+_Avoid_: Conflict PR
+
+**Recorded resolution**:
+The approved resolution of a Sprint conflict, stored by the bot and replayed whenever Refresh, Rebuild or Rollover hits the same conflict again.
+_Avoid_: rr-cache entry
+
 ### States
 
 **Freeze**:
